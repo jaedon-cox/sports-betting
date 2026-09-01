@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * "Night game" scoreboard/ledger (§4.2). The rules this file encodes:
+ *   - Hairlines, not shadows. A scoreboard is drawn with rules and seams.
+ *   - Square corners. 2px is the entire radius vocabulary.
+ *   - Floodlight appears on CTAs, the active nav marker, and the signature
+ *     flip-digits. Nowhere else, or it stops meaning "look here".
+ *   - Every figure is mono and tabular so columns stay rectangular.
+ */
+
+:root {
+  --rule: rgba(242, 238, 227, 0.10);
+  --rule-strong: rgba(242, 238, 227, 0.22);
+  --flap-top: #22352D;
+  --flap-bottom: #1A2A24;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-ink text-chalk font-sans antialiased;
+    /* A stadium is lit from above: one very soft pool of light at the top. */
+    background-image: radial-gradient(
+      120% 60% at 50% -20%,
+      rgba(232, 163, 61, 0.055),
+      transparent 60%
+    );
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(232, 163, 61, 0.28);
+  }
+  :focus-visible {
+    outline: 2px solid #e8a33d;
+    outline-offset: 2px;
+  }
+  a {
+    @apply underline-offset-4;
+  }
+}
+
+@layer components {
+  /* Small uppercase label + a hairline that runs to the end of the row. */
+  .placard {
+    @apply flex items-center gap-3 text-[11px] uppercase tracking-placard text-chalk/45;
+  }
+  .placard::after {
+    content: "";
+    @apply block h-px flex-1;
+    background: var(--rule);
+  }
+
+  .rule-t {
+    border-top: 1px solid var(--rule);
+  }
+  .rule-b {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .panel {
+    @apply border bg-surface;
+    border-color: var(--rule);
+  }
+
+  /* Every odds/edge/CLV/stake figure. */
+  .num {
+    @apply font-mono tabular-nums;
+    font-feature-settings: "tnum" 1, "zero" 1;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 border px-2 py-0.5 text-[10px] uppercase tracking-placard;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center border px-4 py-2 text-[11px] uppercase tracking-placard transition-colors;
+  }
+  .btn-primary {
+    @apply btn border-floodlight bg-floodlight text-ink hover:bg-floodlight/85;
+  }
+  .btn-ghost {
+    @apply btn border-chalk/20 text-chalk/75 hover:border-chalk/45 hover:text-chalk;
+  }
+
+  .field {
+    @apply w-full border bg-ink px-3 py-2 text-sm text-chalk placeholder:text-chalk/30;
+    border-color: var(--rule-strong);
+  }
+
+  /* ---- Box-score table -------------------------------------------------
+   * One markup, two layouts: a right-aligned numeric grid on desktop, and
+   * label/value cards on mobile (§4.2), driven by td[data-label].
+   */
+  .ledger {
+    @apply w-full border-collapse text-sm;
+  }
+  .ledger thead th {
+    @apply px-3 py-2 text-left text-[10px] font-medium uppercase tracking-placard text-chalk/40;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  .ledger tbody td {
+    @apply px-3 py-2.5 align-middle;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ledger tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .ledger tbody tr:hover {
+    background: rgba(242, 238, 227, 0.028);
+  }
+  .ledger .n {
+    @apply text-right;
+  }
+
+  @media (max-width: 767px) {
+    .ledger,
+    .ledger tbody,
+    .ledger tr,
+    .ledger td {
+      display: block;
+      width: 100%;
+    }
+    .ledger thead {
+      display: none;
+    }
+    .ledger tbody tr {
+      border-bottom: 1px solid var(--rule-strong);
+      padding: 0.35rem 0;
+    }
+    .ledger tbody tr:last-child {
+      border-bottom: 0;
+    }
+    .ledger tbody td {
+      @apply flex items-baseline justify-between gap-4 px-3 py-1;
+      border-bottom: 0;
+      text-align: right;
+    }
+    .ledger tbody td[data-label]::before {
+      content: attr(data-label);
+      @apply text-[10px] uppercase tracking-placard text-chalk/40;
+      text-align: left;
+    }
+  }
+
+  /* ---- Split-flap ------------------------------------------------------
+   * The one signature moment. Two static halves plus two folding halves,
+   * exactly like a mechanical board: the upper flap of the OLD character
+   * falls away while the lower flap of the NEW one drops into place.
+   */
+  .flap {
+    --h: 1.16em;
+    --w: 0.76em;
+    position: relative;
+    display: inline-block;
+    width: var(--w);
+    height: var(--h);
+    margin-right: 0.055em;
+    line-height: var(--h);
+    text-align: center;
+    perspective: 260px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--flap-bottom);
+  }
+  .flap__half,
+  .flap__fold {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: calc(var(--h) / 2);
+    overflow: hidden;
+    backface-visibility: hidden;
+  }
+  .flap__half i,
+  .flap__fold i {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: var(--h);
+    line-height: var(--h);
+    font-style: normal;
+  }
+  .fl-top {
+    top: 0;
+    background: var(--flap-top);
+  }
+  .fl-top i {
+    top: 0;
+  }
+  .fl-bot {
+    top: calc(var(--h) / 2);
+    background: var(--flap-bottom);
+  }
+  .fl-bot i {
+    top: calc(var(--h) / -2);
+  }
+  /* The seam a real board has where the two flaps meet. */
+  .flap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - 0.5px);
+    height: 1px;
+    background: rgba(14, 26, 23, 0.85);
+    z-index: 3;
+  }
+  .flap__fold {
+    z-index: 2;
+  }
+  .flap__fold.fl-top {
+    transform-origin: 50% 100%;
+    animation: flap-out 130ms ease-in forwards;
+  }
+  .flap__fold.fl-bot {
+    transform-origin: 50% 0%;
+    transform: rotateX(90deg);
+    animation: flap-in 130ms 130ms ease-out forwards;
+  }
+  @keyframes flap-out {
+    from { transform: rotateX(0deg); }
+    to { transform: rotateX(-90deg); }
+  }
+  @keyframes flap-in {
+    from { transform: rotateX(90deg); }
+    to { transform: rotateX(0deg); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The flip is decorative; the number is the content. Killing the
+   * animation must never leave a digit mid-fold, so the folds are hidden
+   * outright and the static halves already carry the final character. */
+  .flap__fold {
+    display: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
