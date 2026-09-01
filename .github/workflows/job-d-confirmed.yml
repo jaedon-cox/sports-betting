@@ -1,0 +1,58 @@
+# Job D — model run, Pass B (confirmed) — backend doc §2.4.
+#
+# Two crons, one intended run: 18:15 ET is 22:15 UTC under EDT and
+# 23:15 UTC under EST. The guard step keeps the right one and exits the
+# other before installing anything (§2.2 bills whole minutes per invocation).
+name: Job D — model run, Pass B (confirmed)
+
+on:
+  schedule:
+    - cron: "15 22 * 3-11 *"
+    - cron: "15 23 * 3-11 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-d-confirmed
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # TARGET_ET_HOUR / TARGET_ET_MINUTE live in src/sbm/jobs/job_d_confirmed.py;
+      # keep the numbers below in step. clock.py is stdlib-only, so this is free.
+      - id: guard
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import sys
+          sys.path.insert(0, "src")
+          from datetime import UTC, datetime
+          from sbm.jobs.clock import is_intended_run
+          ok = is_intended_run(datetime.now(UTC), 18, 15)
+          print("run=%s" % ("true" if ok else "false"))
+          EOF
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: pip install -e .
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: python -m sbm.jobs d
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}
+          SBM_EDGE_THRESHOLD: ${{ vars.SBM_EDGE_THRESHOLD }}
+          SBM_N_DRAWS: ${{ vars.SBM_N_DRAWS }}

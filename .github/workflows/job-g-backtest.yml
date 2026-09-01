@@ -1,0 +1,43 @@
+# Job G — full historical re-run (backend doc §2.4: on-demand / weekly).
+#
+# **Never on push or pull_request.** §2.2 keeps backtests off every commit to
+# conserve Actions minutes, and §2.4 keeps every workflow off `pull_request`
+# entirely — that trigger is what would expose the Odds API key and the
+# service-role key to a fork PR, and it also keeps the edge logic out of a
+# public run log.
+#
+# This writes nothing. It will also produce nothing until the system has
+# captured enough of its own open/close history: §7 item 3 records that no free
+# source of historical Pinnacle closing lines was found, and `run_backtest`
+# raises on an empty game list rather than reporting a NaN CLV over zero picks.
+name: Job G — backtest
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"   # Mondays, 11am ET (EDT) / 10am ET (EST) — hour is not load-bearing
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-g-backtest
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e .
+      - run: python -m sbm.jobs g
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SBM_EDGE_THRESHOLD: ${{ vars.SBM_EDGE_THRESHOLD }}
+          SBM_N_DRAWS: ${{ vars.SBM_N_DRAWS }}

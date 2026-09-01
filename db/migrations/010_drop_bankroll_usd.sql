@@ -1,0 +1,45 @@
+-- DECISION: drop user_settings.bankroll_usd. Not "out of scope, keep it
+-- for later" — actively removed.
+--
+-- The column contradicts the section that introduced it. §3.5
+-- ("Bankroll immutability") is explicit: "picks.kelly_stake_fraction (a
+-- %) is the ONLY stake figure ever persisted. No $ amount is stored
+-- anywhere", and §5 closes with "Stakes: percent-only in v1; no $
+-- persisted." A NUMERIC(12,2) of dollars in user_settings is the one
+-- place the schema said that and then did the opposite.
+--
+-- It is also read-but-never-written in practice: the frontend selects it
+-- (web/src/lib/data/settings.ts) and the bankroll input lives in
+-- localStorage instead (web/src/components/bankroll/), so the column
+-- serves its DEFAULT 0 forever. That is worse than absent, not neutral —
+-- a future consumer that trusts it computes every dollar stake off a
+-- bankroll of $0.00, and it fails silently because 0 is a legal
+-- bankroll. A column nothing writes cannot be distinguished from a
+-- column whose owner really did enter zero.
+--
+-- Two smaller reasons, both real:
+--   * It is the only financial figure in the schema, so it is the only
+--     thing in the nightly pg_dump -> Cloudflare R2 backup path (§3.6)
+--     that is worth stealing. Dropping it removes a class of exposure
+--     entirely rather than defending it.
+--   * §3.5 already specifies where bankroll tracking goes when someone
+--     wants it: "a future bankroll-tracking feature would need its own
+--     user_bet_log with a bankroll_usd_at_time snapshot; deliberately
+--     not in v1." A dollar figure attached to mutable user_settings is
+--     the wrong shape for that feature anyway — editing it would
+--     retroactively restate what past bets were worth, which is the
+--     exact failure §3.5 was written to prevent. So this drop removes
+--     nothing the eventual feature would have used.
+--
+-- Safe as a DROP COLUMN specifically because user_settings is one of the
+-- deliberate §3.1 exceptions to insert-only (user-owned mutable state) —
+-- there is no append-only history here to invalidate — and because no
+-- Supabase project has been provisioned, so no row has ever held a
+-- non-default value.
+--
+-- Requires a matching frontend change: UserSettingsRow in
+-- web/src/lib/types/rows.ts and the fixture in
+-- web/src/lib/data/settings.ts both still name the column. `frontend`
+-- has been given the exact edit.
+
+ALTER TABLE user_settings DROP COLUMN bankroll_usd;

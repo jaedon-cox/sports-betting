@@ -1,0 +1,46 @@
+# Job H — weekly heartbeat, YEAR-ROUND (backend doc §2.4).
+#
+# The only workflow without a month filter, and that is its entire reason for
+# existing: the MLB offseason (~Nov-Feb) has no slate and no daily pipeline, so
+# "daily writes keep Supabase alive" stops holding exactly when nobody is
+# watching, and a 7-day idle auto-pause would need a manual resume before the
+# season's first pull.
+#
+# §7 item 8 leaves open whether that idle timer keys on API-gateway traffic or a
+# raw postgres:// connection; the doc's own hedge is to route at least one write
+# through REST regardless. Everything this job does is REST, and it needs only
+# httpx to do it (`tests/unit/jobs/test_dependency_profile.py` keeps that true).
+#
+# It must also keep working when every upstream source is dark, which is why it
+# makes no schedule check, no odds call and no revalidation.
+name: Job H — heartbeat
+
+on:
+  schedule:
+    - cron: "0 15 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-h-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install httpx
+      - run: python -m sbm.jobs h
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

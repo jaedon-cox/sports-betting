@@ -1,0 +1,58 @@
+# Job F — nightly settlement (backend doc §2.4). Outcomes, CLV, rollups, purge.
+#
+# 4am ET, not midnight: a ~10pm ET West-coast start finishes after midnight, and
+# settling before it ends would grade half the board as still in progress.
+# 08:00 UTC under EDT, 09:00 under EST; the guard keeps the intended one.
+#
+# Settlement is keyed on the absence of a pick_settlements row rather than on a
+# date, so a night this job misses is picked up by the next one — no backfill
+# workflow is needed, and `workflow_dispatch` re-runs it at any hour.
+name: Job F — nightly settlement
+
+on:
+  schedule:
+    - cron: "0 8 * 3-11 *"    # 04:00 EDT
+    - cron: "0 9 * 3-11 *"    # 04:00 EST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-f-settlement
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # TARGET_ET_HOUR lives in src/sbm/jobs/job_f_settlement/__init__.py.
+      - id: guard
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import sys
+          sys.path.insert(0, "src")
+          from datetime import UTC, datetime
+          from sbm.jobs.clock import is_intended_run
+          print("run=%s" % ("true" if is_intended_run(datetime.now(UTC), 4) else "false"))
+          EOF
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: pip install -e .
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: python -m sbm.jobs f
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}

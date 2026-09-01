@@ -1,0 +1,44 @@
+# Job B — intraday roster/IL refresh, hourly 10am ET -> last first pitch (§2.4).
+#
+# The UTC hour range is the union of both offsets (10am-10pm is 14:00-02:00 UTC
+# under EDT, 15:00-03:00 under EST); `clock.is_within_et_hours` trims whichever
+# hour is outside the ET range today. A range cadence needs no duplicate-trigger
+# guard — unlike Jobs A/C/D/F, which target an instant.
+#
+# This is the highest-frequency job in the system (~14 invocations/day), so its
+# dependency set is deliberately httpx alone — no editable install, no
+# scientific stack. `tests/unit/jobs/test_dependency_profile.py` fails the build
+# if an import ever makes that untrue, because GitHub bills whole minutes per
+# invocation (§2.2) and ~420 unnecessary installs a month is real money's worth
+# of the 2000-minute cap.
+name: Job B — intraday refresh
+
+on:
+  schedule:
+    - cron: "0 0-3,14-23 * 3-11 *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-b-intraday
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install httpx
+      - run: python -m sbm.jobs b
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

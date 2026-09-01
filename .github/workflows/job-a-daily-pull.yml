@@ -1,0 +1,61 @@
+# Job A — daily data pull, ~8am ET (backend doc §2.4).
+#
+# Two crons for one job: GitHub cron is UTC-only with no timezone field, and
+# 8am ET is 12:00 UTC under EDT but 13:00 UTC under EST. Both fire; the guard
+# step below keeps the one that is actually 8am ET and exits the other in a few
+# seconds, before any dependency is installed — GitHub bills whole minutes per
+# invocation (§2.2), so where the check happens is a budget decision.
+#
+# Months 3-11 only. The offseason has no slate; Job H is the year-round job.
+name: Job A — daily data pull
+
+on:
+  schedule:
+    - cron: "0 12 * 3-11 *"   # 08:00 EDT
+    - cron: "0 13 * 3-11 *"   # 08:00 EST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-a-daily-pull
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reuses src/sbm/jobs/clock.py rather than reimplementing the offset in
+      # shell — it is stdlib-only, so this costs no install. TARGET_ET_HOUR
+      # lives in src/sbm/jobs/job_a_daily_pull.py; keep the 8 below in step.
+      - id: guard
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import sys
+          sys.path.insert(0, "src")
+          from datetime import UTC, datetime
+          from sbm.jobs.clock import is_intended_run
+          print("run=%s" % ("true" if is_intended_run(datetime.now(UTC), 8) else "false"))
+          EOF
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: pip install -e .
+
+      - if: github.event_name != 'schedule' || steps.guard.outputs.run == 'true'
+        run: python -m sbm.jobs a
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          REVALIDATE_SECRET: ${{ secrets.REVALIDATE_SECRET }}

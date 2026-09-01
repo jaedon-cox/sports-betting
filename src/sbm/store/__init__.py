@@ -10,7 +10,16 @@ from __future__ import annotations
 
 from sbm.store.budget import get_month_credits_used, record_odds_usage
 from sbm.store.client import PostgrestClient
-from sbm.store.facts import GameRow, ResultRow, TeamRow, upsert_games, upsert_teams, write_results
+from sbm.store.facts import (
+    GameRow,
+    ResultRow,
+    SettlementRow,
+    TeamRow,
+    upsert_games,
+    upsert_teams,
+    write_results,
+    write_settlements,
+)
 from sbm.store.pipeline_health import finish_pipeline_run, start_pipeline_run
 from sbm.store.runs import PickRow, publish_run
 from sbm.store.snapshots import (
@@ -35,6 +44,7 @@ __all__ = [
     "PostgrestClient",
     "RawSnapshotRow",
     "ResultRow",
+    "SettlementRow",
     "TeamRow",
     "WeatherSnapshotRow",
     "finish_pipeline_run",
@@ -50,4 +60,5 @@ __all__ = [
     "upsert_games",
     "upsert_teams",
     "write_results",
+    "write_settlements",
 ]

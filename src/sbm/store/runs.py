@@ -41,9 +41,25 @@ class PickRow:
     player_id: str | None = None
     stat_type: str | None = None
     market_fair_prob: float | None = None
+    devig_method: str | None = None
     market_odds_american: int | None = None
     book: str = "pinnacle"
     edge_pct: float | None = None
+
+    def __post_init__(self) -> None:
+        """Mirror 003's CHECK ((market_fair_prob IS NULL) = (devig_method IS
+        NULL)) locally, the way LineSnapshotRow mirrors 004's identical
+        pairing. Both columns record which de-vig method actually produced
+        the number on THIS row: picks is append-only, so a backtest has to
+        be able to prove the provenance even after markets.devig_method
+        changes. Failing here names the field; the publish RPC would fail
+        as a constraint violation that rolls back the entire slate.
+        """
+        if (self.market_fair_prob is None) != (self.devig_method is None):
+            raise ValueError(
+                "market_fair_prob and devig_method must both be set or both be None "
+                f"(got {self.market_fair_prob!r}, {self.devig_method!r})"
+            )
 
     def to_json(self) -> dict[str, Any]:
         row = asdict(self)
