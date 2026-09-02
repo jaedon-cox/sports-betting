@@ -21,8 +21,24 @@
 -- p_from bounds the window rather than scanning all history: an EWMA
 -- with a season-scale half-life gets no measurable weight from three
 -- years ago, and the index is (entity, game_date DESC).
+--
+-- EVERY FUNCTION IS DROPPED BEFORE IT IS CREATED, so this file can be
+-- re-applied to a database that already has an older version. That is
+-- not stylistic: Postgres refuses to CREATE OR REPLACE a function whose
+-- RETURNS TABLE has changed ("cannot change return type of existing
+-- function"), and these signatures did change once already —
+-- fn_bullpen_game_form shipped without `csw`, which pitching_rates
+-- reads, and Job C died on a bare KeyError three frames inside pandas.
+--
+-- THE COST: a dropped function loses its ACL and a recreated one picks
+-- up Supabase's ALTER DEFAULT PRIVILEGES on schema public, silently
+-- regaining EXECUTE for anon and authenticated. That is exactly the
+-- re-grant hazard APPLY_ORDER.md item 3 describes. So
+-- **db/policies/005_feature_reads.sql MUST be re-run after this file,
+-- every time**, which is where those grants are revoked and re-issued.
 
-CREATE OR REPLACE FUNCTION fn_pitcher_game_form(
+DROP FUNCTION IF EXISTS fn_pitcher_game_form(TEXT[], DATE, DATE);
+CREATE FUNCTION fn_pitcher_game_form(
     p_player_ids TEXT[],
     p_from       DATE,
     p_as_of      DATE
@@ -67,7 +83,8 @@ $$;
 -- three relievers' walks from one night is not a weighted rate and
 -- cannot become a mean of means. The cross-date EWMA still happens in
 -- Python.
-CREATE OR REPLACE FUNCTION fn_bullpen_game_form(
+DROP FUNCTION IF EXISTS fn_bullpen_game_form(TEXT[], DATE, DATE);
+CREATE FUNCTION fn_bullpen_game_form(
     p_teams  TEXT[],
     p_from   DATE,
     p_as_of  DATE
@@ -76,6 +93,7 @@ CREATE OR REPLACE FUNCTION fn_bullpen_game_form(
     game_date      DATE,
     appearances    BIGINT,
     pitches        BIGINT,
+    csw            BIGINT,
     outs           BIGINT,
     batters_faced  BIGINT,
     strikeouts     BIGINT,
@@ -91,6 +109,7 @@ LANGUAGE sql STABLE AS $$
     SELECT s.pitching_team, s.game_date,
            COUNT(*)                AS appearances,
            SUM(s.pitches)          AS pitches,
+           SUM(s.csw)              AS csw,
            SUM(s.outs)             AS outs,
            SUM(s.batters_faced)    AS batters_faced,
            SUM(s.strikeouts)       AS strikeouts,
@@ -114,7 +133,8 @@ $$;
 -- resolves `xwoba_vs_opp_hand` against tonight's opposing starter, so
 -- collapsing the split here would destroy the only thing the column is
 -- for.
-CREATE OR REPLACE FUNCTION fn_team_batting_form(
+DROP FUNCTION IF EXISTS fn_team_batting_form(TEXT[], DATE, DATE);
+CREATE FUNCTION fn_team_batting_form(
     p_teams  TEXT[],
     p_from   DATE,
     p_as_of  DATE
@@ -152,7 +172,8 @@ $$;
 -- since been reinstated, not a player still hurt.
 -- ---------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION fn_injury_status_asof(
+DROP FUNCTION IF EXISTS fn_injury_status_asof(BIGINT[], TIMESTAMPTZ, TIMESTAMPTZ);
+CREATE FUNCTION fn_injury_status_asof(
     p_team_ids BIGINT[],
     p_since    TIMESTAMPTZ,
     p_as_of    TIMESTAMPTZ
@@ -180,7 +201,8 @@ $$;
 -- is kept anyway so that stays true if an observed row is ever written.
 -- ---------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION fn_weather_asof(
+DROP FUNCTION IF EXISTS fn_weather_asof(BIGINT[], TIMESTAMPTZ);
+CREATE FUNCTION fn_weather_asof(
     p_game_ids BIGINT[],
     p_as_of    TIMESTAMPTZ
 ) RETURNS TABLE (

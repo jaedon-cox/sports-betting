@@ -122,7 +122,14 @@ def test_every_rpc_python_calls_is_defined_in_db() -> None:
         for path in _SRC.rglob("*.py")
         for m in _RPC_CALL.finditer(path.read_text())
     }
-    defined = _created(re.compile(r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(\w+)", re.IGNORECASE))
+    # Both spellings count. `CREATE OR REPLACE` is the norm, but a function
+    # whose RETURNS TABLE changes cannot be replaced in place — Postgres
+    # rejects it — so db/migrations/018 drops each of its five first and then
+    # plainly creates. Matching only the replace form would report a
+    # perfectly well-defined function as missing.
+    defined = _created(
+        re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)", re.IGNORECASE)
+    )
     assert called, "the RPC-call regex matched nothing — it has drifted from the call sites"
     assert called <= defined, f"called but not defined in db/: {sorted(called - defined)}"
 

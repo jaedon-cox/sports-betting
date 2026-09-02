@@ -16,3 +16,7 @@ node_modules/
 .next/
 .DS_Store
 CLAUDE.md
+
+# one-off SQL bundles generated for Supabase provisioning
+/fix_bullpen_csw.sql
+/provision_feature_store.sql

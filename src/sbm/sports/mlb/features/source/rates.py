@@ -37,6 +37,15 @@ pull, so the same game would score differently on two different days and no
 backtest would reproduce. A fixed constant is wrong by a little, forever, in
 the same direction — which standardisation absorbs."""
 
+REQUIRED_COLUMNS = (
+    "game_date", "pitches", "csw", "batters_faced", "outs", "strikeouts",
+    "walks", "hit_by_pitch", "ground_balls", "fly_balls", "line_drives", "popups",
+)
+"""Every column `pitching_rates` reads. Both read functions that feed it —
+`fn_pitcher_game_form` and `fn_bullpen_game_form` — must return all of them,
+which is asserted against the SQL itself in
+`tests/unit/mlb_features/test_rate_contract.py`."""
+
 FIP_CONSTANT = 3.336
 """Scales xFIP onto the ERA scale. Same fixed-vs-recomputed argument as above.
 
@@ -122,6 +131,20 @@ def pitching_rates(history: pd.DataFrame, *, entity: str, as_of: datetime) -> pd
     columns = ["xfip", "csw_pct", "gb_pct", "innings_pitched"]
     if history.empty:
         return pd.DataFrame(columns=columns, dtype=float)
+
+    missing = sorted(set(REQUIRED_COLUMNS) - set(history.columns))
+    if missing:
+        # Named rather than left to pandas. This fired once in production as a
+        # bare `KeyError: 'csw'` three frames inside `recency.py`, because
+        # `fn_bullpen_game_form` aggregated every counting stat except that one
+        # — a mismatch between a SQL RETURNS TABLE and this function's inputs,
+        # which no type checker sees and which the unit tests missed by only
+        # ever feeding the bullpen path an empty result.
+        raise KeyError(
+            f"pitching_rates is missing {missing} for entity={entity!r}. The read "
+            "function feeding it must return every column in REQUIRED_COLUMNS — see "
+            "db/migrations/018 and tests/unit/mlb_features/test_rate_contract.py."
+        )
 
     work = history.assign(
         _balls_in_play=history["ground_balls"]

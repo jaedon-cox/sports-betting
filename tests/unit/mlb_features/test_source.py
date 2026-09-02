@@ -242,3 +242,59 @@ def test_lookup_keys_are_coerced_to_text_so_a_numeric_id_cannot_miss() -> None:
     client = FakeClient({"fn_pitcher_game_form": rows})
     home, _ = source(client).pitcher_inputs(["555"], AS_OF)
     assert not np.isnan(home.loc["555", "xfip"])
+
+
+# -- the bullpen path with real rows --------------------------------------
+#
+# Every bullpen assertion above ran against an EMPTY result, which returns
+# early before a single column is read — which is exactly how a missing `csw`
+# in fn_bullpen_game_form reached production. These feed it real rows.
+
+
+def bullpen_row(team: str, game_date: str, **overrides) -> dict:
+    base = {
+        "pitching_team": team, "game_date": game_date, "appearances": 3,
+        "pitches": 48, "csw": 14, "outs": 9, "batters_faced": 12, "strikeouts": 4,
+        "walks": 1, "hit_by_pitch": 0, "home_runs": 0, "ground_balls": 4,
+        "fly_balls": 3, "line_drives": 1, "popups": 1,
+    }
+    return {**base, **overrides}
+
+
+def test_bullpen_rates_are_computed_from_real_rows() -> None:
+    rows = [bullpen_row("NYY", f"2026-08-{d:02d}") for d in (25, 27, 29, 31)]
+    client = FakeClient({"fn_bullpen_game_form": rows})
+    home, away = source(client).bullpen_inputs(["555"], AS_OF)
+    assert 1.0 < home.loc["555", "xfip"] < 9.0
+    assert np.isnan(away.loc["555", "xfip"])  # BOS has no rows
+
+
+def test_a_read_missing_a_column_fails_naming_it() -> None:
+    """The production failure was `KeyError: 'csw'` from inside recency.py, with
+    nothing pointing at the SQL. It must name the column and the migration."""
+    rows = [{k: v for k, v in bullpen_row("NYY", "2026-08-29").items() if k != "csw"}]
+    client = FakeClient({"fn_bullpen_game_form": rows})
+    with pytest.raises(KeyError, match="missing \\['csw'\\]"):
+        source(client).bullpen_inputs(["555"], AS_OF)
+
+
+def test_fatigue_is_a_zero_centred_index_not_a_pitch_count() -> None:
+    """`mean.py` adds this in LOG space — raw pitches per day produced
+    exp(0.05 * 57) and a 46-run projection."""
+    from sbm.sports.mlb.features.source.derive import (
+        FATIGUE_WINDOW_DAYS,
+        NORMAL_RELIEF_PITCHES_PER_DAY,
+    )
+
+    normal = NORMAL_RELIEF_PITCHES_PER_DAY * FATIGUE_WINDOW_DAYS
+    rows = [bullpen_row("NYY", "2026-08-31", pitches=int(normal))]
+    client = FakeClient({"fn_bullpen_game_form": rows})
+    home, _ = source(client).bullpen_inputs(["555"], AS_OF)
+    assert home.loc["555", "fatigue"] == pytest.approx(0.0, abs=0.05)
+
+
+def test_an_overworked_pen_scores_positive() -> None:
+    rows = [bullpen_row("NYY", "2026-08-31", pitches=300)]
+    client = FakeClient({"fn_bullpen_game_form": rows})
+    home, _ = source(client).bullpen_inputs(["555"], AS_OF)
+    assert home.loc["555", "fatigue"] > 1.0
