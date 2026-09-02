@@ -17,7 +17,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from sbm.store.client import PostgrestClient
+from sbm.store.client import PostgrestClient, PostgrestError
 
 URL = "https://example.supabase.co"
 KEY = "service-key"
@@ -75,8 +75,25 @@ def test_a_table_return_still_parses(monkeypatch) -> None:
 def test_an_error_status_still_raises(monkeypatch) -> None:
     """An empty body must not turn a 500 into a silent None."""
     respond(monkeypatch, response(500, body=b""))
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(PostgrestError):
         client().rpc("fn_refresh_rollups", {})
+
+
+def test_the_error_carries_the_response_body(monkeypatch) -> None:
+    """`httpx.raise_for_status` reports only status and URL, so a PostgREST 400
+    arrived as "Client error '400 Bad Request'" and nothing else — while the
+    body it discarded says exactly which constraint failed. Job C failed twice
+    with that empty message."""
+    body = b'{"code":"23514","message":"violates check constraint \"picks_model_prob_check\""}'
+    respond(monkeypatch, response(400, body=body))
+    with pytest.raises(PostgrestError, match="picks_model_prob_check"):
+        client().rpc("fn_publish_run", {})
+
+
+def test_the_error_names_which_call_failed(monkeypatch) -> None:
+    respond(monkeypatch, response(400, body=b"nope"))
+    with pytest.raises(PostgrestError, match="rpc fn_publish_run failed with 400"):
+        client().rpc("fn_publish_run", {})
 
 
 def test_the_function_is_called_under_rest_v1_rpc(monkeypatch) -> None:

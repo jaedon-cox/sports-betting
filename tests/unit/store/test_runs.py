@@ -119,3 +119,34 @@ def test_an_empty_slate_still_publishes_a_run() -> None:
         pass_type="confirmed", picks=[],
     ) == 42
     assert client.calls[0][1]["p_picks"] == []
+
+
+# -- non-finite guard -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field", ["line", "raw_model_prob", "model_prob", "market_fair_prob",
+              "edge_pct", "kelly_stake_fraction"],
+)
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_value_is_refused_naming_the_field(field: str, bad: float) -> None:
+    """`json.dumps` emits bare NaN/Infinity, which is not valid JSON. PostgREST
+    answers 400 with a body naming neither field nor row, and because the slate
+    publishes in one call a single bad pick loses all of them."""
+    with pytest.raises(ValueError, match=f"{field}=.*is not finite"):
+        pick(**{field: bad})
+
+
+def test_the_error_names_the_game_and_market() -> None:
+    with pytest.raises(ValueError, match="game_id=101 moneyline/home"):
+        pick(model_prob=float("nan"))
+
+
+def test_finite_values_including_the_bounds_are_accepted() -> None:
+    """0.0 and 1.0 are legitimate probabilities and must not trip the guard."""
+    assert pick(raw_model_prob=0.0, model_prob=1.0).model_prob == 1.0
+
+
+def test_a_none_line_is_not_treated_as_non_finite() -> None:
+    """Moneyline carries no line; None must skip the check, not fail it."""
+    assert pick(line=None).line is None

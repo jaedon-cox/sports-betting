@@ -20,6 +20,29 @@ import httpx
 
 _TIMEOUT = 15.0
 
+_BODY_LIMIT = 1500
+"""How much of an error body to surface. PostgREST's are short and specific."""
+
+
+class PostgrestError(RuntimeError):
+    """A PostgREST request failed, with its response body attached.
+
+    `httpx.HTTPStatusError` reports only the status and URL, so a PostgREST
+    400 arrives as `Client error '400 Bad Request'` and nothing else — while
+    the body it discarded says exactly which constraint failed, which column
+    was unknown, or which value could not be parsed. Job C failed twice with
+    that empty message before this existed.
+    """
+
+
+def _raise_for_status(resp: httpx.Response, what: str) -> None:
+    """`raise_for_status`, but keeping the part that explains the failure."""
+    if resp.status_code < 400:
+        return
+    raise PostgrestError(
+        f"{what} failed with {resp.status_code}: {resp.text[:_BODY_LIMIT]}"
+    )
+
 
 class PostgrestClient:
     """Authenticated wrapper around one Supabase project's REST endpoint."""
@@ -44,7 +67,7 @@ class PostgrestClient:
             headers={**self._headers, "Prefer": "return=representation"},
             timeout=_TIMEOUT,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, f"insert into {table}")
         return resp.json()
 
     def upsert(self, table: str, rows: list[dict[str, Any]], on_conflict: str) -> list[dict[str, Any]]:
@@ -58,7 +81,7 @@ class PostgrestClient:
             headers={**self._headers, "Prefer": "resolution=merge-duplicates,return=representation"},
             timeout=_TIMEOUT,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, f"upsert into {table}")
         return resp.json()
 
     def patch(self, table: str, match: dict[str, Any], values: dict[str, Any]) -> None:
@@ -69,7 +92,7 @@ class PostgrestClient:
         resp = httpx.patch(
             f"{self._rest_url}/{table}", params=params, json=values, headers=self._headers, timeout=_TIMEOUT
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, f"patch {table}")
 
     def rpc(self, function_name: str, params: dict[str, Any]) -> Any:
         """Call a Postgres function — the one way this layer gets a
@@ -85,7 +108,7 @@ class PostgrestClient:
         that completes and one that dies on its last step.
         """
         resp = httpx.post(f"{self._rest_url}/rpc/{function_name}", json=params, headers=self._headers, timeout=_TIMEOUT)
-        resp.raise_for_status()
+        _raise_for_status(resp, f"rpc {function_name}")
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()

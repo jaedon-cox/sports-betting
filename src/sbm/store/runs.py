@@ -9,6 +9,8 @@ module only shapes the payload and calls the RPC.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Any
@@ -60,6 +62,39 @@ class PickRow:
                 "market_fair_prob and devig_method must both be set or both be None "
                 f"(got {self.market_fair_prob!r}, {self.devig_method!r})"
             )
+        self._reject_non_finite()
+
+    _NUMERIC_FIELDS = (
+        "line", "raw_model_prob", "model_prob", "market_fair_prob",
+        "edge_pct", "kelly_stake_fraction",
+    )
+
+    def _reject_non_finite(self) -> None:
+        """No NaN or infinity may reach the publish RPC.
+
+        `json.dumps` serialises them as bare `NaN` / `Infinity`, which are not
+        valid JSON. PostgREST rejects the whole request with a 400 whose body
+        names neither the field nor the row — and since the slate publishes in
+        one call, a single bad pick loses all of them. Failing here names the
+        field and the game.
+
+        A NaN probability means the model produced one, which is a real defect
+        upstream: `model/columns.py` substitutes league averages for missing
+        features precisely so a thin feature store yields a dull number rather
+        than an undefined one. So this is a bug detector, not a data cleaner —
+        it deliberately raises instead of coercing to None.
+        """
+        for name in self._NUMERIC_FIELDS:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"{name}={value!r} is not finite for game_id={self.game_id} "
+                    f"{self.market}/{self.side}. json.dumps would emit invalid JSON and "
+                    "the publish RPC would 400 for the whole slate. A non-finite "
+                    "probability means the model produced one — check the feature frame."
+                )
 
     def to_json(self) -> dict[str, Any]:
         row = asdict(self)
