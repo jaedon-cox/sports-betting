@@ -135,3 +135,4 @@ A numbered-prefix scheme across `views/` would encode the order in the filenames
 and make this file unnecessary. It was deliberately not done: `src/sbm/jobs/` and
 `web/README.md` both reference these filenames, and `pipeline` was mid-flight.
 The rename is the better long-term fix and is safe to do once wave 2 lands.
+

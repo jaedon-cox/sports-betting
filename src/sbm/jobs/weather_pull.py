@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import httpx
+
 from sbm.jobs.slate_ingest import Slate
 from sbm.sports.mlb.ingest.archive import CaptureList
 from sbm.sports.mlb.ingest.statsapi import StatsApiClient, fetch_venue
@@ -68,10 +70,35 @@ def pull_weather(
 def _venue_forecast(
     stats: StatsApiClient, venue_id: int, capture: CaptureList | None
 ) -> list[WeatherForecast]:
-    venue = fetch_venue(venue_id, client=stats)
-    if venue.latitude is None or venue.longitude is None:
+    """One venue's hourly series, or `[]` if the forecast could not be had.
+
+    **A weather failure must not fail Job A.** The job's load-bearing output is
+    the opening odds snapshot — 3 of 500 monthly credits, and the price every
+    `bet_prob` and therefore every CLV number is measured against (§2.5). It is
+    bought *after* this runs, so an exception here costs the day's anchor price
+    to save a feature the model already defaults through: `columns._or_default`
+    substitutes the league-average run environment for a missing forecast, per
+    doc §5.4's "assume average beats crashing the pipeline".
+
+    Open-Meteo is free, unauthenticated and rate-limited per IP, and GitHub
+    Actions runners come from shared Azure ranges — so a throttle is a routine
+    operating condition, not an anomaly. Observed in production as an empty
+    200 body (a `JSONDecodeError`, not a 4xx), which is why `ValueError` is
+    caught alongside `httpx.HTTPError` rather than trusting `raise_for_status`.
+
+    Failures are printed, never swallowed: the run stays green because the job
+    did its real work, and the operator still sees which venue degraded and
+    why. `pull_weather`'s row count dropping below the slate size is the other
+    signal.
+    """
+    try:
+        venue = fetch_venue(venue_id, client=stats)
+        if venue.latitude is None or venue.longitude is None:
+            return []
+        return fetch_forecast(venue.latitude, venue.longitude, capture=capture)
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"weather: venue {venue_id} degraded to no forecast — {type(exc).__name__}: {exc}")
         return []
-    return fetch_forecast(venue.latitude, venue.longitude, capture=capture)
 
 
 def _nearest_hour(hourly: list[WeatherForecast], start_time_utc: datetime) -> WeatherForecast | None:

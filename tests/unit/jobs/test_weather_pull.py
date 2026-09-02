@@ -8,7 +8,10 @@ wrapped rather than rejected by Postgres. `FakeStats` and `slate_with` come from
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+
+import httpx
 
 from sbm.jobs.weather_pull import pull_weather
 from sbm.sports.mlb.ingest.statsapi.venue import VenueInfo
@@ -96,3 +99,68 @@ def test_a_null_wind_direction_stays_null(monkeypatch) -> None:
     client = FakeClient()
     pull_weather(client, stats=FakeStats(), slate=slate_with(game(555, "H", "A")), now=NOW)  # type: ignore[arg-type]
     assert client.rows_for("weather_snapshots")[0]["wind_dir_deg"] is None
+
+
+# --------------------------------------------------------------------------
+# degradation — a weather failure must never cost Job A its odds snapshot
+# --------------------------------------------------------------------------
+
+
+def failing_forecast(monkeypatch, exc: Exception) -> None:
+    """Venue resolves, the forecast call blows up."""
+    monkeypatch.setattr("sbm.jobs.weather_pull.fetch_venue", lambda vid, *, client: PARK)
+
+    def boom(lat, lon, *, capture=None, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("sbm.jobs.weather_pull.fetch_forecast", boom)
+
+
+def test_an_empty_200_body_degrades_to_no_rows_rather_than_raising(monkeypatch) -> None:
+    """The production failure: Open-Meteo throttled a shared Actions IP and
+    answered 200 with an empty body, so `raise_for_status` passed and `.json()`
+    raised. Job A must still reach its opening odds sweep."""
+    failing_forecast(monkeypatch, json.JSONDecodeError("Expecting value", "", 0))
+    client = FakeClient()
+    assert pull_weather(client, stats=FakeStats(), slate=slate_with(game(555, "H", "A")), now=NOW) == 0  # type: ignore[arg-type]
+    assert client.rows_for("weather_snapshots") == []
+
+
+def test_a_transport_error_degrades_the_same_way(monkeypatch) -> None:
+    failing_forecast(monkeypatch, httpx.ConnectTimeout("timed out"))
+    assert pull_weather(FakeClient(), stats=FakeStats(), slate=slate_with(game(555, "H", "A")), now=NOW) == 0  # type: ignore[arg-type]
+
+
+def test_a_4xx_degrades_the_same_way(monkeypatch) -> None:
+    failing_forecast(
+        monkeypatch,
+        httpx.HTTPStatusError("429", request=httpx.Request("GET", "http://x"), response=httpx.Response(429)),
+    )
+    assert pull_weather(FakeClient(), stats=FakeStats(), slate=slate_with(game(555, "H", "A")), now=NOW) == 0  # type: ignore[arg-type]
+
+
+def test_one_bad_venue_does_not_cost_the_other_venues_their_rows(monkeypatch) -> None:
+    """Per-venue, not per-slate: a single throttled call must not blank the
+    whole board's weather."""
+    monkeypatch.setattr("sbm.jobs.weather_pull.fetch_venue", lambda vid, *, client: PARK)
+
+    calls = {"n": 0}
+
+    def forecast_for(lat, lon, *, capture=None, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise json.JSONDecodeError("Expecting value", "", 0)
+        return [forecast(23)]
+
+    monkeypatch.setattr("sbm.jobs.weather_pull.fetch_forecast", forecast_for)
+    slate = slate_with(game(555, "H", "A"), game(556, "H", "A"))
+    object.__setattr__(slate.games[1], "venue_id", 8)  # a second, distinct venue
+    assert pull_weather(FakeClient(), stats=FakeStats(), slate=slate, now=NOW) == 1  # type: ignore[arg-type]
+
+
+def test_the_failure_is_reported_not_swallowed(monkeypatch, capsys) -> None:
+    """A green run still has to tell the operator which venue degraded."""
+    failing_forecast(monkeypatch, json.JSONDecodeError("Expecting value", "", 0))
+    pull_weather(FakeClient(), stats=FakeStats(), slate=slate_with(game(555, "H", "A")), now=NOW)  # type: ignore[arg-type]
+    out = capsys.readouterr().out
+    assert "venue 7" in out and "JSONDecodeError" in out
