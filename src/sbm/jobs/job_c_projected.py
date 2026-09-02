@@ -17,13 +17,15 @@ earlier games get a shorter lead and later ones a longer one, and
 `picks.pick_locked_at` records what each actually was. For the research pass
 that is a fair trade. Job D carries the same caveat and it matters more there.
 
-**This job cannot succeed yet, and the failure is the correct behaviour.**
-`MLBFeatureBuilder`'s default `SnapshotSource` is `_UnwiredSnapshotSource`,
-which raises `NotImplementedError` on every method because `store/` is
-write-only and no point-in-time read layer exists (`features/builder.py` says
-so in its own docstring). Passing `builder=` here is the whole wiring change
-when one lands; until then this fails loudly rather than pricing fabricated
-features.
+**Features come from `PostgrestSnapshotSource`** (wired 2026-09-02, replacing
+the `_UnwiredSnapshotSource` that used to make this job fail by design). Every
+value it returns derives from rows strictly earlier than `as_of`, enforced in
+SQL rather than by convention — see `features/source/`.
+
+The one thing this job must keep supplying is the slate context: which clubs
+are playing, who the probable starters are, and the venue facts. None of that
+is in the database at pick time, so `jobs/feature_source.build_source` gathers
+it from the schedule pull above.
 """
 
 from __future__ import annotations
@@ -31,8 +33,10 @@ from __future__ import annotations
 from sbm.jobs.archive import drain
 from sbm.jobs.clock import is_intended_run
 from sbm.jobs.context import JobContext
+from sbm.jobs.feature_source import build_source
 from sbm.jobs.model_pass import run_pass
 from sbm.jobs.slate_ingest import ingest_slate
+from sbm.sports.mlb.features import MLBFeatureBuilder
 from sbm.sports.mlb.ingest.archive import CaptureList
 from sbm.sports.mlb.ingest.statsapi import StatsApiClient
 
@@ -52,11 +56,17 @@ def run(ctx: JobContext) -> str:
         slate = ingest_slate(
             ctx.client, stats=stats, sport=sport, slate_date=slate_date, capture=capture
         )
+        if not slate.games:
+            drain(ctx.client, capture)
+            return f"{slate_date}: no games — nothing to score"
+        # Built inside the client block: the venue lookups it makes need the
+        # same throttled StatsAPI session the schedule pull used.
+        source = build_source(
+            ctx.client, stats=stats, slate=slate, team_codes=slate.team_codes
+        )
     drain(ctx.client, capture)
-    if not slate.games:
-        return f"{slate_date}: no games — nothing to score"
 
-    result = run_pass(ctx, slate, pass_type=PASS_TYPE)
+    result = run_pass(ctx, slate, pass_type=PASS_TYPE, builder=MLBFeatureBuilder(source=source))
     return (
         f"{slate_date} pass={PASS_TYPE} run={result.model_run_id}: {result.n_picks} picks "
         f"({result.n_recommended} recommended) over {result.n_games} games, "

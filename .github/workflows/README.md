@@ -62,6 +62,7 @@ guard: a manual re-run is deliberate, usually at the "wrong" hour on purpose.
 | F settlement | 04:00 | `0 8`, `0 9` (Mar–Nov) | `is_intended_run(…, 4)` |
 | G backtest | Mondays | `0 15 * * 1` | none — the hour is not load-bearing |
 | H heartbeat | Sundays | `0 15 * * 0`, **year-round** | none |
+| I statcast | 05:00 ET-ish | `0 9 * * *` | none — the window is a date range, so DST is irrelevant |
 
 Months 3–11 keep the seasonal jobs from billing anything in the offseason. Job H
 is the only one without a month filter, which is its entire purpose: the
@@ -85,8 +86,9 @@ applies to the UTC date, so the last evening of October still runs (Nov 1 UTC).
 | F | 1 real + 1 guarded | 3 + 1 | ~120 |
 | G | weekly | ~15 | ~65 |
 | H | weekly | 1 | ~4 |
+| I | 1 | ~4 | ~120 |
 
-≈ **1330/month in season**, against the 2000 cap. Jobs B and H install `httpx`
+≈ **1450/month in season**, against the 2000 cap. Jobs B and H install `httpx`
 alone rather than the scientific stack, which is what keeps B's ~420 invocations
 at one billed minute each; `tests/unit/jobs/test_dependency_profile.py` fails the
 build if an import ever makes that untrue.
@@ -113,6 +115,11 @@ All shipped by `db` and granted to `service_role` only:
 | `fn_refresh_rollups` | 011 | F |
 | `fn_backtest_rows` | 015 | G |
 | `fn_odds_budget_month_total` | 008 | every priced call, plus H |
+| `fn_pitcher_game_form` | 018 | C, D (via `features/source/`) |
+| `fn_bullpen_game_form` | 018 | C, D |
+| `fn_team_batting_form` | 018 | C, D |
+| `fn_injury_status_asof` | 018 | C, D |
+| `fn_weather_asof` | 018 | C, D |
 
 `src/sbm/jobs/rpc.py` is the only module naming them, so a rename upstream
 changes one file.
@@ -142,9 +149,13 @@ cover them:
    the `on_conflict` key, and `tests/unit/store/test_sql_invariants.py` reads the
    migrations, but nothing here has ever spoken to real PostgREST — no Supabase
    project has been provisioned.
-3. **Jobs C and D past the model.** They are tested with an injected `builder=`,
-   which is the seam a real `SnapshotSource` will land on. The default path still
-   raises (see the first-live-run note below).
+3. **Whether the feature store has data in it.** `PostgrestSnapshotSource` is
+   unit-tested against fake RPC results, and the rate math was validated against
+   three months of live Statcast (xFIP median 3.82, CSW% 26.6%, GB% 42.4%, an
+   average matchup projecting 9.25 total runs). What no test can tell you is
+   whether Job I has actually populated the tables for the slate being priced —
+   an empty store produces league-average features and a plausible-looking board.
+   Check `SELECT count(*) FROM pitcher_game_stats` before trusting a pick.
 
 ## Operating notes
 
@@ -160,10 +171,17 @@ cover them:
   ran ahead of us. It fires only on `NOT_INGESTED` — a gamePk the odds feed knows
   and `games` does not. Doubleheaders and off-slate games are counted separately
   and never alert.
-- **First live run**: expect Jobs C and D to fail with `NotImplementedError` from
-  `_UnwiredSnapshotSource` until a point-in-time `SnapshotSource` exists (see
-  `sports/mlb/features/builder.py`). That is the designed failure — the
-  alternative is pricing fabricated features.
+- **Job I must have run before C or D can price anything.** The feature store
+  it fills (`pitcher_game_stats`, `team_batting_game_stats`) is where every
+  model input comes from; with it empty, every feature is NaN and
+  `model/columns.py` substitutes league averages for all thirty clubs — so C
+  and D succeed, publish, and produce a board of picks with no information in
+  it. That failure is silent, which makes it the most dangerous state in the
+  system. **Backfill a season first**: dispatch Job I with `from`/`to` set.
+- **Only Job I installs the `mlb` extra.** C and D read the stat tables out of
+  Postgres and never touch Statcast, so `pip install -e .` is right for them.
+  `tests/unit/jobs/test_dependency_profile.py` asserts the workflows and the
+  import closure agree, in both directions.
 - **The Odds API region param is still [OPEN]** (§7 item 4). `theoddsapi.py`
   fails loud if a response carries other books but not Pinnacle; verify against a
   live key before trusting any CLV number.

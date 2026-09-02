@@ -56,6 +56,7 @@ JOB_MODULES: dict[str, str] = {
     "f": "sbm.jobs.job_f_settlement",
     "g": "sbm.jobs.job_g_backtest",
     "h": "sbm.jobs.job_h_heartbeat",
+    "i": "sbm.jobs.job_i_statcast",
 }
 """Job letter -> module. Each module exposes `JOB_NAME`, `run` and optionally
 `guard`. Imported lazily so `python -m sbm.jobs h` does not import pandas."""

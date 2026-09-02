@@ -91,6 +91,16 @@ def _standardize(value: float, league_avg: float, scale: float) -> float:
 def extract_side_inputs(features: pd.Series, side: str) -> SideInputs:
     """Build one side's model inputs from a game feature row.
 
+    **Column names follow `features/`, i.e. `{side}_{family}_{stat}`** — the
+    order was `{stat}_{side}` here until 2026-09-02 and had never matched what
+    `features/` emits. Nothing caught it: `model` and `ingest` each pinned
+    their own convention in their own tests, and the two layers had no way to
+    meet while `_UnwiredSnapshotSource` stood between them. Wiring a real
+    `SnapshotSource` made every side-split column a KeyError on the first real
+    frame. Resolved toward `features/` because it is the producer, it is
+    consistent across six modules, and `_raw`'s own error text defers to
+    ingest on naming.
+
     side='home': home team bats, away team pitches to them (and vice versa for
     side='away'). `contact_quality_proxy` is `side`'s own offense, since that's the
     lineup the OPPOSING starter (`opp`) actually faces — see module docstring for
@@ -100,13 +110,13 @@ def extract_side_inputs(features: pd.Series, side: str) -> SideInputs:
         raise ValueError(f"side must be 'home' or 'away', got {side!r}")
     opp = "away" if side == "home" else "home"
 
-    off_wrc_plus = _or_default(features, f"off_wrc_plus_{side}", WRC_PLUS_LEAGUE_AVG)
-    off_xwoba = _or_default(features, f"off_xwoba_vs_opp_hand_{side}", XWOBA_LEAGUE_AVG)
-    opp_siera = _or_default(features, f"starter_siera_{opp}", SIERA_LEAGUE_AVG)
-    opp_xfip = _or_default(features, f"bullpen_xfip_{opp}", XFIP_LEAGUE_AVG)
-    opp_fatigue = _or_default(features, f"bullpen_fatigue_{opp}", 0.0)
-    opp_csw = _or_default(features, f"starter_csw_pct_{opp}", CSW_PCT_LEAGUE_AVG)
-    opp_gb = _or_default(features, f"starter_gb_pct_{opp}", GB_PCT_LEAGUE_AVG)
+    off_wrc_plus = _or_default(features, f"{side}_off_wrc_plus", WRC_PLUS_LEAGUE_AVG)
+    off_xwoba = _or_default(features, f"{side}_off_xwoba_vs_opp_hand", XWOBA_LEAGUE_AVG)
+    opp_siera = _or_default(features, f"{opp}_starter_siera", SIERA_LEAGUE_AVG)
+    opp_xfip = _or_default(features, f"{opp}_bullpen_xfip", XFIP_LEAGUE_AVG)
+    opp_fatigue = _or_default(features, f"{opp}_bullpen_fatigue", 0.0)
+    opp_csw = _or_default(features, f"{opp}_starter_csw_pct", CSW_PCT_LEAGUE_AVG)
+    opp_gb = _or_default(features, f"{opp}_starter_gb_pct", GB_PCT_LEAGUE_AVG)
 
     return SideInputs(
         off_wrc_plus_z=_standardize(off_wrc_plus, WRC_PLUS_LEAGUE_AVG, WRC_PLUS_SCALE),

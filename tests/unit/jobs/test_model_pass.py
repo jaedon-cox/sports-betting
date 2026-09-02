@@ -29,7 +29,7 @@ SLATE_DATE = date(2026, 7, 1)
 # --------------------------------------------------------------------------
 
 _NEUTRAL_COLUMNS = [
-    f"{stem}_{side}"
+    f"{side}_{stem}"
     for stem in (
         "off_wrc_plus",
         "off_xwoba_vs_opp_hand",

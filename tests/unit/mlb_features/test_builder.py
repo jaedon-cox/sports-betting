@@ -74,13 +74,16 @@ def test_builder_satisfies_the_feature_builder_contract() -> None:
 
 
 def test_zero_arg_construction_succeeds_but_build_fails_loud() -> None:
-    """vertical.py calls `MLBFeatureBuilder()` with no args — construction
-    must succeed (no real SnapshotSource exists yet, sbm.store is
-    write-only), but calling build() must raise clearly rather than
-    fabricate data."""
+    """vertical.py calls `MLBFeatureBuilder()` with no args — construction must
+    succeed, but calling build() must raise clearly rather than fabricate data.
+
+    Still the right default now that `PostgrestSnapshotSource` exists: a builder
+    constructed with no source has nothing to read, and reaching this in
+    production means a job forgot to pass `source=`. The message names the class
+    it should have passed."""
     builder = MLBFeatureBuilder()
     assert isinstance(builder, FeatureBuilder)
-    with pytest.raises(NotImplementedError, match="no point-in-time snapshot source"):
+    with pytest.raises(NotImplementedError, match="constructed with no snapshot source"):
         builder.build(GAME_IDS, AsOf(ts=datetime(2026, 8, 29, tzinfo=UTC)))
 
 

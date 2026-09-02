@@ -85,3 +85,52 @@ def test_high_frequency_jobs_need_nothing_but_httpx(letter: str, module: str) ->
         "the minute budget in .github/workflows/README.md."
     )
     assert needed <= {"httpx"}, f"job {letter} gained a new dependency: {sorted(needed - {'httpx'})}"
+
+
+# ---------------------------------------------------------------------------
+# The `mlb` extra — pybaseball belongs to Job I alone
+# ---------------------------------------------------------------------------
+
+PYBASEBALL_JOBS = {"i": "sbm.jobs.job_i_statcast"}
+"""The only job allowed to need the optional `mlb` extra.
+
+Jobs C and D read the per-game stat tables out of Postgres through
+`features/source/`, which never touches Statcast — so `pip install -e .` is
+correct for them and `.[mlb]` would install a large dependency they never
+import. That was asserted the wrong way round once during the feature-store
+build and caught by an import closure, which is why it is now a test.
+"""
+
+
+@pytest.mark.parametrize("letter", sorted(set(LIGHT_JOBS) | {"a", "c", "d", "e", "f", "g"}))
+def test_only_job_i_needs_pybaseball(letter: str) -> None:
+    """A job that pulls pybaseball in must have `.[mlb]` in its workflow. Keep
+    the set minimal: the extra is only on Job I's install step."""
+    from sbm.jobs.runner import JOB_MODULES
+
+    assert "pybaseball" not in third_party_closure(JOB_MODULES[letter])
+
+
+def test_job_i_does_need_pybaseball() -> None:
+    """The other half — if this ever stops being true, Job I is not fetching."""
+    assert "pybaseball" in third_party_closure(PYBASEBALL_JOBS["i"])
+
+
+def test_workflow_install_steps_match_the_import_closure() -> None:
+    """The workflow and the code must agree. A job that imports pybaseball but
+    installs without the extra fails minutes into a run, on a lazy import."""
+    from sbm.jobs.runner import JOB_MODULES
+
+    workflows = Path(__file__).resolve().parents[3] / ".github" / "workflows"
+    names = {
+        "a": "job-a-daily-pull", "b": "job-b-intraday", "c": "job-c-projected",
+        "d": "job-d-confirmed", "e": "job-e-closing-lines", "f": "job-f-settlement",
+        "g": "job-g-backtest", "h": "job-h-heartbeat", "i": "job-i-statcast",
+    }
+    for letter, stem in names.items():
+        text = (workflows / f"{stem}.yml").read_text()
+        needs = "pybaseball" in third_party_closure(JOB_MODULES[letter])
+        installs = "[mlb]" in text
+        assert needs == installs, (
+            f"{stem}: imports pybaseball={needs} but installs the mlb extra={installs}"
+        )

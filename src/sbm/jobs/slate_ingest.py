@@ -22,7 +22,7 @@ point-in-time fact the parse throws away.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from sbm.jobs.mlb_reference import fetch_team_rows
@@ -49,6 +49,12 @@ class Slate:
     """external_game_id (gamePk, str) -> games.id (int)."""
     team_ids: dict[int, int]
     """StatsAPI team id -> teams.id (int)."""
+    team_codes: dict[int, str] = field(default_factory=dict)
+    """StatsAPI team id -> `teams.code` ("NYY"). The feature layer keys
+    `pitcher_game_stats.pitching_team` on the club code rather than on the
+    surrogate, because those rows backfill to seasons predating this `teams`
+    table (db/migrations/017). Defaulted so existing constructions of `Slate`
+    stay valid — the id maps are what every other job uses."""
 
     @property
     def external_ids(self) -> list[str]:
@@ -89,7 +95,17 @@ def ingest_slate(
     rows = [_game_row(game, sport, team_ids) for game in games]
     stored_games = upsert_games(client, [row for row in rows if row is not None])
     game_ids = {str(row["external_game_id"]): int(row["id"]) for row in stored_games}
-    return Slate(slate_date=slate_date, games=games, game_ids=game_ids, team_ids=team_ids)
+    return Slate(
+        slate_date=slate_date,
+        games=games,
+        game_ids=game_ids,
+        team_ids=team_ids,
+        team_codes={
+            statsapi_id: row.code
+            for statsapi_id, row in team_rows.items()
+            if row.code in code_to_id
+        },
+    )
 
 
 def _game_row(game: ScheduledGame, sport: str, team_ids: dict[int, int]) -> GameRow | None:

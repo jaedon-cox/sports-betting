@@ -22,7 +22,8 @@ whole slate's picks and the `running -> success` flip land together or not at
 all, so a job that dies at game 8 of 15 leaves nothing visible and the frontend
 keeps the last known-good slate (§2.4).
 
-Same unwired-feature-source caveat as Job C — see that module.
+Features come from `PostgrestSnapshotSource`, assembled the same way as in
+Job C — see that module.
 """
 
 from __future__ import annotations
@@ -30,10 +31,12 @@ from __future__ import annotations
 from sbm.jobs.archive import drain
 from sbm.jobs.clock import is_intended_run
 from sbm.jobs.context import JobContext
+from sbm.jobs.feature_source import build_source
 from sbm.jobs.model_pass import run_pass
 from sbm.jobs.revalidate import revalidate_publish
 from sbm.jobs.slate import write_slate_status
 from sbm.jobs.slate_ingest import ingest_slate
+from sbm.sports.mlb.features import MLBFeatureBuilder
 from sbm.sports.mlb.ingest.archive import CaptureList
 from sbm.sports.mlb.ingest.statsapi import StatsApiClient
 
@@ -54,15 +57,23 @@ def run(ctx: JobContext) -> str:
         slate = ingest_slate(
             ctx.client, stats=stats, sport=sport, slate_date=slate_date, capture=capture
         )
-    drain(ctx.client, capture)
-    if not slate.games:
-        write_slate_status(
-            ctx.client, sport=sport, slate_date=slate_date, status="no_games", n_games=0
+        if not slate.games:
+            drain(ctx.client, capture)
+            write_slate_status(
+                ctx.client, sport=sport, slate_date=slate_date, status="no_games", n_games=0
+            )
+            return f"{slate_date}: no games — nothing to publish"
+        # Built inside the client block: the venue lookups it makes need the
+        # same throttled StatsAPI session the schedule pull used.
+        source = build_source(
+            ctx.client, stats=stats, slate=slate, team_codes=slate.team_codes
         )
-        return f"{slate_date}: no games — nothing to publish"
+    drain(ctx.client, capture)
 
     try:
-        result = run_pass(ctx, slate, pass_type=PASS_TYPE)
+        result = run_pass(
+            ctx, slate, pass_type=PASS_TYPE, builder=MLBFeatureBuilder(source=source)
+        )
     except Exception:
         # The frontend must be able to tell "today failed" from "today is still
         # coming"; `pipeline_runs` records the job, `slate_status` records the

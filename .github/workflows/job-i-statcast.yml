@@ -1,0 +1,62 @@
+# Job I — nightly Statcast pull into the per-game feature store.
+#
+# The job Jobs C and D depend on. Everything the model knows about pitchers and
+# hitters comes from `pitcher_game_stats` / `team_batting_game_stats`
+# (db/migrations/017), and this is the only writer.
+#
+# **Never on push or pull_request** — §2.4, same as every workflow here: that
+# trigger is what would expose the service-role key to a fork PR.
+#
+# Runs at 09:00 UTC, an hour after Job F's settlement sweep. No DST guard: the
+# window it covers is a date range ending yesterday, so landing at 4am or 5am
+# ET pulls exactly the same games. That is the whole reason this job has no
+# `is_intended_run` pre-check and only one cron, unlike A/C/D/F.
+#
+# Costs no Odds API credits. It does pull a few days of pitch-level Statcast,
+# which is why the timeout is generous relative to the work — the free endpoint
+# is rate-limited and pybaseball retries.
+#
+# BACKFILL: dispatch with `from`/`to` set. Same code path as the nightly run,
+# deliberately (CLAUDE.md rule 4) — a backfill running different code would
+# produce a different history to backtest against. Statcast reaches 2015, so a
+# season at a time is a reasonable chunk.
+name: Job I — statcast feature store
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 09:00 UTC year-round; date-ranged, so DST is irrelevant
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Backfill start date (YYYY-MM-DD). Both bounds or neither."
+        required: false
+      to:
+        description: "Backfill end date (YYYY-MM-DD). Both bounds or neither."
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-i-statcast
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # The `mlb` extra is what installs pybaseball. Without it this job fails
+      # on the lazy `import pybaseball` inside the fetch, several minutes in.
+      - run: pip install -e ".[mlb]"
+      - run: python -m sbm.jobs i
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SBM_BACKFILL_FROM: ${{ inputs.from }}
+          SBM_BACKFILL_TO: ${{ inputs.to }}

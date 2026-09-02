@@ -40,6 +40,8 @@ db/migrations/013_publish_run_devig_method.sql
 db/migrations/014_settlement_rpcs.sql
 db/migrations/015_backtest_rows.sql
 db/migrations/016_settlement_clv_provenance.sql
+db/migrations/017_player_game_stats.sql
+db/migrations/018_feature_reads.sql
 db/views/record_summary.sql
 db/views/record_breakdown.sql
 db/views/mv_clv_trend.sql
@@ -52,6 +54,7 @@ db/policies/001_enable_rls.sql
 db/policies/002_authenticated_read_grants.sql
 db/policies/003_user_owned_rls.sql
 db/policies/004_wave2_read_surface.sql
+db/policies/005_feature_reads.sql
 ```
 
 Within `migrations/`, numeric order is the dependency order and there is nothing

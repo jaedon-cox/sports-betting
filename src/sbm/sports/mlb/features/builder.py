@@ -4,15 +4,18 @@ for live production (`as_of` = now) and backtest reconstruction (`as_of` =
 some historical instant), so there is no separate backtest code path to
 silently diverge from production.
 
-`SnapshotSource` is the one injected seam: point-in-time reads over stored
-snapshots (`WHERE captured_at_utc <= as_of ORDER BY captured_at_utc DESC
-LIMIT 1`, backend doc §3.2). This package doesn't own that implementation —
-`db`/`store` does, and as of writing `store/` is write-only (confirmed with
-`db`: "no REST read layer in this package"), so no real `SnapshotSource`
-exists yet anywhere in the repo. `MLBFeatureBuilder()` is still
-zero-arg-constructible (`vertical.py` calls it that way) via
-`_UnwiredSnapshotSource`, which fails loud on first use rather than
-fabricating data — see its docstring. Pass a real `source=` once one exists.
+`SnapshotSource` is the one injected seam. **A real implementation now exists:
+`features/source/PostgrestSnapshotSource`** (2026-09-02). It reads the
+per-game fact tables in db/migrations/017 and enforces the as-of cut in SQL,
+which is a stronger guarantee than the snapshot-style read this docstring
+originally anticipated: a per-game row is immutable, so `game_date < as_of`
+makes leakage structurally impossible rather than a discipline.
+
+`MLBFeatureBuilder()` stays zero-arg-constructible (`vertical.py` calls it that
+way) via `_UnwiredSnapshotSource`, which fails loud rather than fabricating
+data. That default is still correct — a builder constructed with no source has
+nothing to read — but it is no longer the only option, and Jobs C and D pass a
+real `source=`.
 
 Wherever a `SnapshotSource` method needs genuine recency-weighting over raw
 history (currently: bullpen fatigue, from `ingest/savant.py`'s per-appearance
@@ -68,10 +71,10 @@ class SnapshotSource(Protocol):
 
 
 _UNWIRED_SOURCE_ERROR = (
-    "MLBFeatureBuilder has no point-in-time snapshot source wired yet — "
-    "sbm.store is write-only as of writing (confirmed with `db`: no read "
-    "layer exists), so there is nothing real to default to. Pass a real "
-    "SnapshotSource explicitly: MLBFeatureBuilder(source=my_source)."
+    "MLBFeatureBuilder was constructed with no snapshot source. Pass one "
+    "explicitly: MLBFeatureBuilder(source=PostgrestSnapshotSource(client=..., "
+    "games=...)) from sbm.sports.mlb.features.source — jobs/feature_source.py "
+    "assembles it from a slate."
 )
 
 
@@ -80,6 +83,10 @@ class _UnwiredSnapshotSource:
     args — `vertical.py.feature_builder()` calls it that way — without
     silently returning fabricated data. Every method raises instead of
     guessing; this is the "honest placeholder," not a working implementation.
+
+    Reaching this in production means a job forgot to pass `source=`. Since
+    2026-09-02 the thing it should have passed is
+    `features/source/PostgrestSnapshotSource`.
     """
 
     def pitcher_inputs(self, game_ids: list[str], as_of: AsOf) -> SideFrames:
