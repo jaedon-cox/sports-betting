@@ -73,7 +73,19 @@ class PostgrestClient:
 
     def rpc(self, function_name: str, params: dict[str, Any]) -> Any:
         """Call a Postgres function — the one way this layer gets a
-        multi-statement operation to run as a single transaction."""
+        multi-statement operation to run as a single transaction.
+
+        Returns None for a function declared `RETURNS VOID`: PostgREST answers
+        those with `204 No Content` and a zero-length body, which passes
+        `raise_for_status` and then fails in `resp.json()` as a bare
+        `JSONDecodeError: Expecting value: line 1 column 1` — an error that
+        names neither the function nor the reason. `fn_refresh_rollups` is the
+        only such function today (db/migrations/011), and Job F calls it on
+        every settlement run, so this is the difference between a nightly job
+        that completes and one that dies on its last step.
+        """
         resp = httpx.post(f"{self._rest_url}/rpc/{function_name}", json=params, headers=self._headers, timeout=_TIMEOUT)
         resp.raise_for_status()
+        if resp.status_code == 204 or not resp.content:
+            return None
         return resp.json()
